@@ -31,7 +31,9 @@ test("PR body contains the ClickUp ticket reference and description", () => {
 test("Deploy Flow determines the configured PR targets", () => {
   const branches = { master: "master", staging: "staging" };
   assert.deepEqual(resolvePullRequestTargets(branches, "Staging"), [
-    { role: "master", targetBranch: "master" },
+    { role: "staging", targetBranch: "staging" },
+  ]);
+  assert.deepEqual(resolvePullRequestTargets(branches, "staging"), [
     { role: "staging", targetBranch: "staging" },
   ]);
   assert.deepEqual(resolvePullRequestTargets(branches, "Production"), [
@@ -185,11 +187,6 @@ exit 2
     assert.equal(await startWorkflow(options), "feat/86cavbfx9");
     assert.deepEqual(await submitWorkflow(options), [
       {
-        role: "master",
-        targetBranch: "master",
-        url: "https://github.com/company/frontend/pull/123",
-      },
-      {
         role: "staging",
         targetBranch: "staging",
         url: "https://github.com/company/frontend/pull/124",
@@ -219,21 +216,19 @@ exit 2
     updates[1].body.value,
     [
       "company/backend: https://github.com/company/backend/pull/44",
-      "company/frontend: master: https://github.com/company/frontend/pull/123; staging: https://github.com/company/frontend/pull/124",
+      "company/frontend: https://github.com/company/frontend/pull/124",
     ].join("\n"),
   );
   assert.deepEqual(
     (await readFile(ghCwdLog, "utf8")).trim().split("\n"),
-    [repositoryRoot, repositoryRoot, repositoryRoot, repositoryRoot],
+    [repositoryRoot, repositoryRoot],
   );
   const ghCalls = (await readFile(ghArgsLog, "utf8"))
     .trim()
     .split("\n")
     .filter((line) => line.startsWith("pr "));
-  assert.match(ghCalls[0], /pr list .* --base master /);
-  assert.match(ghCalls[1], /pr create .* --base master /);
-  assert.match(ghCalls[2], /pr list .* --base staging /);
-  assert.match(ghCalls[3], /pr create .* --base staging /);
+  assert.match(ghCalls[0], /pr list .* --base staging /);
+  assert.match(ghCalls[1], /pr create .* --base staging /);
   assert.equal(
     await readFile(ghBodyLog, "utf8"),
     "Add some stuff - https://app.clickup.com/t/86cavbfx9\n\nImplementation details",

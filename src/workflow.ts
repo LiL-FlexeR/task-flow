@@ -181,7 +181,7 @@ export function resolvePullRequestTargets(
   const normalizedFlow = deployFlow.trim().toLowerCase();
   const requestedRoles: Array<keyof PullRequestBranches> =
     normalizedFlow === "staging"
-      ? ["master", "staging"]
+      ? ["staging"]
       : normalizedFlow === "production"
         ? ["master"]
         : [];

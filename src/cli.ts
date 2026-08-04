@@ -5,7 +5,7 @@ import { resolveRepository } from "./repository.js";
 import type { ConfigLayer } from "./types.js";
 import { startWorkflow, submitWorkflow } from "./workflow.js";
 
-const VERSION = "1.3.0";
+const VERSION = "1.3.1";
 
 const HELP = `task-flow — глобальный GitHub/ClickUp workflow CLI
 
@@ -22,8 +22,8 @@ const HELP = `task-flow — глобальный GitHub/ClickUp workflow CLI
   --taskId <id>                    ID задачи ClickUp (обязательный)
   --description <text>             Дополнительное описание pull request
   --branch <name>                  Базовая ветка
-  --pr-master-branch <name>        Target PR для Deploy Flow Production/Staging
-  --pr-staging-branch <name>       Дополнительный target PR для Deploy Flow Staging
+  --pr-master-branch <name>        Target PR для Deploy Flow Production
+  --pr-staging-branch <name>       Target PR для Deploy Flow Staging
   --branch-prefix <prefix>         Префикс рабочей ветки
   --feature-branch <name>          Полное имя рабочей ветки
   --remote <name>                  Git remote

@@ -73,8 +73,7 @@ task-flow --help
 - `branch` — базовая ветка (`master` по умолчанию);
 - `pullRequestBranches.master` — основной target PR; если не задан, используется
   итоговое значение `branch`;
-- `pullRequestBranches.staging` — дополнительный target PR для `Deploy Flow =
-  Staging`;
+- `pullRequestBranches.staging` — target PR для `Deploy Flow = Staging`;
 - `branchPrefix` — префикс рабочей ветки (`feat` по умолчанию);
 - `featureBranch` — необязательное полное имя рабочей ветки;
 - `remote` — Git remote (`origin` по умолчанию);
@@ -179,7 +178,7 @@ ClickUp. Поддерживаются два значения:
 
 | Deploy Flow | Создаваемые PR |
 | --- | --- |
-| `Staging` | `pullRequestBranches.master` и `pullRequestBranches.staging` |
+| `Staging` | только `pullRequestBranches.staging` |
 | `Production` | только `pullRequestBranches.master` |
 
 Для dropdown-поля CLI преобразует сохранённый ClickUp option ID или
@@ -237,7 +236,7 @@ company/backend: feat/86cavbfx9
 и для pull requests:
 
 ```text
-company/frontend: master: https://github.com/company/frontend/pull/123; staging: https://github.com/company/frontend/pull/124
+company/frontend: https://github.com/company/frontend/pull/124
 company/backend: https://github.com/company/backend/pull/44
 ```
 
