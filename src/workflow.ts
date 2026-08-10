@@ -107,10 +107,6 @@ export async function submitWorkflow(
   options: WorkflowOptions,
 ): Promise<PullRequestResult[]> {
   const { repository, config, taskId } = options;
-  const pullRequestFieldId = requireFieldId(
-    config.clickup.pullRequestFieldId,
-    "pullRequestFieldId",
-  );
   const clickUp = new ClickUpClient(options.clickUpToken, config.clickup);
   const deployFlow = await clickUp.getCustomFieldValue(taskId, {
     ...(config.clickup.deployFlowFieldId
@@ -165,6 +161,20 @@ export async function submitWorkflow(
   if (!submissionTarget) {
     return [];
   }
+  const [pullRequestFieldId, pullRequestFieldName] =
+    submissionTarget.role === "staging"
+      ? [
+          config.clickup.stagingPullRequestFieldId,
+          "stagingPullRequestFieldId",
+        ]
+      : [
+          config.clickup.productionPullRequestFieldId,
+          "productionPullRequestFieldId",
+        ];
+  const resolvedPullRequestFieldId = requireFieldId(
+    pullRequestFieldId,
+    pullRequestFieldName,
+  );
 
   const result: PullRequestResult = {
     role: submissionTarget.role,
@@ -194,7 +204,7 @@ export async function submitWorkflow(
 
   await clickUp.updateRepositoryField(
     taskId,
-    pullRequestFieldId,
+    resolvedPullRequestFieldId,
     repository.nameWithOwner,
     formatPullRequestFieldValue([result]),
   );

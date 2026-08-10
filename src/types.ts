@@ -1,7 +1,8 @@
 export interface ClickUpConfig {
   apiBaseUrl: string;
   branchFieldId?: string;
-  pullRequestFieldId?: string;
+  productionPullRequestFieldId?: string;
+  stagingPullRequestFieldId?: string;
   deployFlowFieldId?: string;
   deployFlowFieldName: string;
   teamId?: string;

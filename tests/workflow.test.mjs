@@ -145,9 +145,14 @@ exit 2
           value: "company/backend: feat/86cavbfx9",
         },
         {
-          id: "pr-field",
+          id: "production-pr-field",
           value:
             "company/backend: https://github.com/company/backend/pull/44",
+        },
+        {
+          id: "staging-pr-field",
+          value:
+            "company/backend: https://github.com/company/backend/pull/45",
         },
         {
           id: "deploy-flow-field",
@@ -185,7 +190,8 @@ exit 2
       clickup: {
         apiBaseUrl: "https://clickup.example.test/api/v2",
         branchFieldId: "branch-field",
-        pullRequestFieldId: "pr-field",
+        productionPullRequestFieldId: "production-pr-field",
+        stagingPullRequestFieldId: "staging-pr-field",
         deployFlowFieldName: "Deploy Flow",
       },
     },
@@ -289,14 +295,14 @@ exit 2
   assert.equal(
     updates[1].body.value,
     [
-      "company/backend: https://github.com/company/backend/pull/44",
+      "company/backend: https://github.com/company/backend/pull/45",
       "company/frontend: https://github.com/company/frontend/pull/124",
     ].join("\n"),
   );
   assert.equal(
     updates[2].body.value,
     [
-      "company/backend: https://github.com/company/backend/pull/44",
+      "company/backend: https://github.com/company/backend/pull/45",
       "company/frontend: https://github.com/company/frontend/pull/124",
     ].join("\n"),
   );
@@ -307,6 +313,9 @@ exit 2
       "company/frontend: https://github.com/company/frontend/pull/123",
     ].join("\n"),
   );
+  assert.match(updates[1].url, /\/field\/staging-pr-field$/);
+  assert.match(updates[2].url, /\/field\/staging-pr-field$/);
+  assert.match(updates[3].url, /\/field\/production-pr-field$/);
   assert.deepEqual(
     (await readFile(ghCwdLog, "utf8")).trim().split("\n"),
     [

@@ -229,7 +229,8 @@ function validateLayer(value: unknown, location: string): void {
     for (const key of [
       "apiBaseUrl",
       "branchFieldId",
-      "pullRequestFieldId",
+      "productionPullRequestFieldId",
+      "stagingPullRequestFieldId",
       "deployFlowFieldId",
       "deployFlowFieldName",
       "teamId",

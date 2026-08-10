@@ -30,7 +30,8 @@ const HELP = `task-flow — глобальный GitHub/ClickUp workflow CLI
   --pull / --no-pull               Включить/выключить pull базовой ветки
   --draft / --no-draft             Создавать draft pull request
   --branch-field-id <id>           ClickUp field ID для веток
-  --pull-request-field-id <id>     ClickUp field ID для pull requests
+  --production-pull-request-field-id <id>  ClickUp field ID для production PR
+  --staging-pull-request-field-id <id>     ClickUp field ID для staging PR
   --deploy-flow-field-id <id>      ClickUp field ID для Deploy Flow
   --deploy-flow-field-name <name>  Имя поля Deploy Flow
   --team-id <id>                   ClickUp team ID для custom task IDs
@@ -129,7 +130,8 @@ export function parseCli(argv: string[]): ParsedCli {
         draft: { type: "boolean" },
         "no-draft": { type: "boolean" },
         "branch-field-id": { type: "string" },
-        "pull-request-field-id": { type: "string" },
+        "production-pull-request-field-id": { type: "string" },
+        "staging-pull-request-field-id": { type: "string" },
         "deploy-flow-field-id": { type: "string" },
         "deploy-flow-field-name": { type: "string" },
         "team-id": { type: "string" },
@@ -201,8 +203,13 @@ export function parseCli(argv: string[]): ParsedCli {
   setString(clickup, "branchFieldId", values["branch-field-id"]);
   setString(
     clickup,
-    "pullRequestFieldId",
-    values["pull-request-field-id"],
+    "productionPullRequestFieldId",
+    values["production-pull-request-field-id"],
+  );
+  setString(
+    clickup,
+    "stagingPullRequestFieldId",
+    values["staging-pull-request-field-id"],
   );
   setString(clickup, "teamId", values["team-id"]);
   setString(clickup, "apiBaseUrl", values["clickup-api-base-url"]);

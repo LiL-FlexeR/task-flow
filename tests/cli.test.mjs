@@ -13,6 +13,8 @@ test("CLI arguments are converted to a config override", () => {
     "--description=Implementation details",
     "--no-pull",
     "--branch-field-id=field-from-cli",
+    "--production-pull-request-field-id=production-field-from-cli",
+    "--staging-pull-request-field-id=staging-field-from-cli",
   ]);
 
   assert.equal(result.command, "start");
@@ -28,6 +30,8 @@ test("CLI arguments are converted to a config override", () => {
     pull: false,
     clickup: {
       branchFieldId: "field-from-cli",
+      productionPullRequestFieldId: "production-field-from-cli",
+      stagingPullRequestFieldId: "staging-field-from-cli",
     },
   });
 });

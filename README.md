@@ -43,7 +43,8 @@ task-flow --help
     "draft": false,
     "clickup": {
       "branchFieldId": "clickup-branch-custom-field-id",
-      "pullRequestFieldId": "clickup-pr-custom-field-id",
+      "productionPullRequestFieldId": "clickup-production-pr-custom-field-id",
+      "stagingPullRequestFieldId": "clickup-staging-pr-custom-field-id",
       "deployFlowFieldName": "Deploy Flow"
     }
   },
@@ -82,7 +83,10 @@ task-flow --help
 - `draft` — создавать draft PR;
 - `clickup.apiBaseUrl` — `https://api.clickup.com/api/v2` по умолчанию;
 - `clickup.branchFieldId` — ID текстового custom field для веток;
-- `clickup.pullRequestFieldId` — ID текстового custom field для PR;
+- `clickup.productionPullRequestFieldId` — ID текстового custom field для PR
+  в production;
+- `clickup.stagingPullRequestFieldId` — ID текстового custom field для PR
+  в staging;
 - `clickup.deployFlowFieldName` — имя custom field с режимом deploy
   (`Deploy Flow` по умолчанию);
 - `clickup.deployFlowFieldId` — необязательный ID поля Deploy Flow; если задан,
@@ -166,7 +170,8 @@ task-flow submit \
   --pr-master-branch=master \
   --pr-staging-branch=staging \
   --draft \
-  --pull-request-field-id=custom-field-id \
+  --production-pull-request-field-id=production-custom-field-id \
+  --staging-pull-request-field-id=staging-custom-field-id \
   --deploy-flow-field-id=deploy-flow-field-id
 ```
 
@@ -261,7 +266,10 @@ company/frontend: feat/86cavbfx9
 company/backend: feat/86cavbfx9
 ```
 
-и для pull requests:
+Production и staging pull requests записываются в отдельные custom fields,
+настроенные через `productionPullRequestFieldId` и
+`stagingPullRequestFieldId`. В каждом поле сохраняется название репозитория и
+ссылка на соответствующий PR:
 
 ```text
 company/frontend: https://github.com/company/frontend/pull/124

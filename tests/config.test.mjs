@@ -15,7 +15,8 @@ test("config precedence is CLI > repository > defaults", () => {
         remote: "upstream",
         clickup: {
           branchFieldId: "default-branch-field",
-          pullRequestFieldId: "default-pr-field",
+          productionPullRequestFieldId: "default-production-pr-field",
+          stagingPullRequestFieldId: "default-staging-pr-field",
         },
       },
       repositories: {
@@ -26,6 +27,7 @@ test("config precedence is CLI > repository > defaults", () => {
           },
           clickup: {
             branchFieldId: "frontend-branch-field",
+            stagingPullRequestFieldId: "frontend-staging-pr-field",
           },
         },
       },
@@ -38,6 +40,7 @@ test("config precedence is CLI > repository > defaults", () => {
       },
       clickup: {
         branchFieldId: "cli-branch-field",
+        productionPullRequestFieldId: "cli-production-pr-field",
       },
     },
   );
@@ -50,7 +53,14 @@ test("config precedence is CLI > repository > defaults", () => {
   assert.equal(config.branchPrefix, "feature");
   assert.equal(config.remote, "upstream");
   assert.equal(config.clickup.branchFieldId, "cli-branch-field");
-  assert.equal(config.clickup.pullRequestFieldId, "default-pr-field");
+  assert.equal(
+    config.clickup.productionPullRequestFieldId,
+    "cli-production-pr-field",
+  );
+  assert.equal(
+    config.clickup.stagingPullRequestFieldId,
+    "frontend-staging-pr-field",
+  );
 });
 
 test("another repository does not receive repository-specific values", () => {
