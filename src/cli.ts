@@ -5,7 +5,7 @@ import { resolveRepository } from "./repository.js";
 import type { ConfigLayer } from "./types.js";
 import { startWorkflow, submitWorkflow } from "./workflow.js";
 
-const VERSION = "1.3.1";
+const VERSION = "1.4.0";
 
 const HELP = `task-flow — глобальный GitHub/ClickUp workflow CLI
 
@@ -22,7 +22,7 @@ const HELP = `task-flow — глобальный GitHub/ClickUp workflow CLI
   --taskId <id>                    ID задачи ClickUp (обязательный)
   --description <text>             Дополнительное описание pull request
   --branch <name>                  Базовая ветка
-  --pr-master-branch <name>        Target PR для Deploy Flow Production
+  --pr-master-branch <name>        Target PR для Production/promotion
   --pr-staging-branch <name>       Target PR для Deploy Flow Staging
   --branch-prefix <prefix>         Префикс рабочей ветки
   --feature-branch <name>          Полное имя рабочей ветки
@@ -96,6 +96,10 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
   }
 
   const pullRequests = await submitWorkflow(workflowOptions);
+  if (pullRequests.length === 0) {
+    process.stdout.write("Cancelled.\n");
+    return;
+  }
   process.stdout.write(`Готово: ${repository.nameWithOwner}\n`);
   for (const pullRequest of pullRequests) {
     process.stdout.write(

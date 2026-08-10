@@ -22,7 +22,8 @@ npm link
 task-flow --help
 ```
 
-Чтобы удалить link, выполните `npm unlink -g task-flow-cli`.
+Чтобы удалить link, выполните
+`npm unlink -g @lilflexer/task-flow-cli`.
 
 ## Конфигурация
 
@@ -178,7 +179,7 @@ ClickUp. Поддерживаются два значения:
 
 | Deploy Flow | Создаваемые PR |
 | --- | --- |
-| `Staging` | только `pullRequestBranches.staging` |
+| `Staging` | сначала `pullRequestBranches.staging`, после merge — promotion в `pullRequestBranches.master` |
 | `Production` | только `pullRequestBranches.master` |
 
 Для dropdown-поля CLI преобразует сохранённый ClickUp option ID или
@@ -186,6 +187,33 @@ ClickUp. Поддерживаются два значения:
 также поддерживаются. Пустое, неизвестное значение или отсутствующая
 `pullRequestBranches.staging` для Staging Flow приводят к понятной ошибке до
 публикации ветки.
+
+### Promotion после staging
+
+Менять `Deploy Flow` после тестирования не требуется. При повторном `submit`
+для `Deploy Flow = Staging` CLI проверяет PR из feature-ветки в настроенную
+staging-ветку:
+
+- если PR отсутствует, он создаётся;
+- если PR открыт, CLI использует существующий URL и не создаёт дубликат;
+- если PR смержен, CLI проверяет, что текущий `HEAD` совпадает с последним
+  протестированным commit этого PR;
+- если master PR уже открыт или смержен, используется его существующий URL;
+- иначе CLI предлагает promotion:
+
+```text
+PR to staging_release is already merged.
+Press Enter to open PR to master_release or q to cancel:
+```
+
+`Enter` создаёт PR в `pullRequestBranches.master`. `q` или `Q` завершает
+команду с сообщением `Cancelled` без `git fetch`, `git push` и обновления
+ClickUp. Для prompt требуется интерактивный терминал.
+
+Если после merge staging PR в feature-ветке появились новые коммиты, promotion
+блокируется: эти изменения должны сначала пройти новый staging PR и
+тестирование. Для promotion ветки `pullRequestBranches.master` и
+`pullRequestBranches.staging` должны отличаться.
 
 Перед публикацией feature-ветки CLI fetch-ит настроенные target-ветки в
 remote-tracking refs. Это позволяет `gh pr create --fill` корректно вычислять

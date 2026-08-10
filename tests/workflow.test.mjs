@@ -79,7 +79,16 @@ test("start and submit run from repository root and write scoped ClickUp lines",
 pwd >> "$GH_CWD_LOG"
 echo "$*" >> "$GH_ARGS_LOG"
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
-  exit 1
+  case "$GH_PROMOTION_MODE:$*" in
+    open:*"--base staging "*)
+      printf '[{"number":124,"url":"https://github.com/company/frontend/pull/124","state":"OPEN","mergedAt":null,"headRefOid":"%s","createdAt":"2026-08-04T09:00:00Z"}]\n' "$GH_MERGED_HEAD"
+      ;;
+    merged:*"--base staging "*)
+      printf '[{"number":124,"url":"https://github.com/company/frontend/pull/124","state":"MERGED","mergedAt":"2026-08-04T10:00:00Z","headRefOid":"%s","createdAt":"2026-08-04T09:00:00Z"}]\n' "$GH_MERGED_HEAD"
+      ;;
+    *) printf '[]\n' ;;
+  esac
+  exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
   previous=""
@@ -111,6 +120,8 @@ exit 2
   const originalLog = process.env.GH_CWD_LOG;
   const originalArgsLog = process.env.GH_ARGS_LOG;
   const originalBodyLog = process.env.GH_BODY_LOG;
+  const originalPromotionMode = process.env.GH_PROMOTION_MODE;
+  const originalMergedHead = process.env.GH_MERGED_HEAD;
   const originalFetch = globalThis.fetch;
   const updates = [];
   process.env.PATH = `${binDirectory}${delimiter}${originalPath ?? ""}`;
@@ -192,6 +203,64 @@ exit 2
         url: "https://github.com/company/frontend/pull/124",
       },
     ]);
+
+    process.env.GH_MERGED_HEAD = gitOutput(repositoryRoot, [
+      "rev-parse",
+      "HEAD",
+    ]).trim();
+    process.env.GH_PROMOTION_MODE = "open";
+    assert.deepEqual(await submitWorkflow(options), [
+      {
+        role: "staging",
+        targetBranch: "staging",
+        url: "https://github.com/company/frontend/pull/124",
+      },
+    ]);
+
+    process.env.GH_PROMOTION_MODE = "merged";
+    assert.deepEqual(
+      await submitWorkflow({
+        ...options,
+        confirmPromotion: async (masterBranch, stagingBranch) => {
+          assert.equal(masterBranch, "master");
+          assert.equal(stagingBranch, "staging");
+          return false;
+        },
+      }),
+      [],
+    );
+    assert.equal(updates.length, 3, "cancel must not update ClickUp");
+
+    assert.deepEqual(
+      await submitWorkflow({
+        ...options,
+        confirmPromotion: async (masterBranch, stagingBranch) => {
+          assert.equal(masterBranch, "master");
+          assert.equal(stagingBranch, "staging");
+          return true;
+        },
+      }),
+      [
+        {
+          role: "master",
+          targetBranch: "master",
+          url: "https://github.com/company/frontend/pull/123",
+        },
+      ],
+    );
+
+    await writeFile(join(repositoryRoot, "after-staging.txt"), "untested\n");
+    git(repositoryRoot, ["add", "after-staging.txt"]);
+    git(repositoryRoot, ["commit", "--quiet", "-m", "Untested change"]);
+    await assert.rejects(
+      submitWorkflow({
+        ...options,
+        confirmPromotion: async () => {
+          throw new Error("prompt must not be called");
+        },
+      }),
+      /не были протестированы на staging/,
+    );
   } finally {
     globalThis.fetch = originalFetch;
     if (originalPath === undefined) delete process.env.PATH;
@@ -202,9 +271,14 @@ exit 2
     else process.env.GH_ARGS_LOG = originalArgsLog;
     if (originalBodyLog === undefined) delete process.env.GH_BODY_LOG;
     else process.env.GH_BODY_LOG = originalBodyLog;
+    if (originalPromotionMode === undefined)
+      delete process.env.GH_PROMOTION_MODE;
+    else process.env.GH_PROMOTION_MODE = originalPromotionMode;
+    if (originalMergedHead === undefined) delete process.env.GH_MERGED_HEAD;
+    else process.env.GH_MERGED_HEAD = originalMergedHead;
   }
 
-  assert.equal(updates.length, 2);
+  assert.equal(updates.length, 4);
   assert.equal(
     updates[0].body.value,
     [
@@ -219,9 +293,33 @@ exit 2
       "company/frontend: https://github.com/company/frontend/pull/124",
     ].join("\n"),
   );
+  assert.equal(
+    updates[2].body.value,
+    [
+      "company/backend: https://github.com/company/backend/pull/44",
+      "company/frontend: https://github.com/company/frontend/pull/124",
+    ].join("\n"),
+  );
+  assert.equal(
+    updates[3].body.value,
+    [
+      "company/backend: https://github.com/company/backend/pull/44",
+      "company/frontend: https://github.com/company/frontend/pull/123",
+    ].join("\n"),
+  );
   assert.deepEqual(
     (await readFile(ghCwdLog, "utf8")).trim().split("\n"),
-    [repositoryRoot, repositoryRoot],
+    [
+      repositoryRoot,
+      repositoryRoot,
+      repositoryRoot,
+      repositoryRoot,
+      repositoryRoot,
+      repositoryRoot,
+      repositoryRoot,
+      repositoryRoot,
+      repositoryRoot,
+    ],
   );
   const ghCalls = (await readFile(ghArgsLog, "utf8"))
     .trim()
@@ -229,6 +327,13 @@ exit 2
     .filter((line) => line.startsWith("pr "));
   assert.match(ghCalls[0], /pr list .* --base staging /);
   assert.match(ghCalls[1], /pr create .* --base staging /);
+  assert.match(ghCalls[2], /pr list .* --base staging /);
+  assert.match(ghCalls[3], /pr list .* --base staging /);
+  assert.match(ghCalls[4], /pr list .* --base master /);
+  assert.match(ghCalls[5], /pr list .* --base staging /);
+  assert.match(ghCalls[6], /pr list .* --base master /);
+  assert.match(ghCalls[7], /pr create .* --base master /);
+  assert.match(ghCalls[8], /pr list .* --base staging /);
   assert.equal(
     await readFile(ghBodyLog, "utf8"),
     "Add some stuff - https://app.clickup.com/t/86cavbfx9\n\nImplementation details",
@@ -238,4 +343,10 @@ exit 2
 function git(cwd, args) {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
+}
+
+function gitOutput(cwd, args) {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout;
 }

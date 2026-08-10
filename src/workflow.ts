@@ -1,3 +1,4 @@
+import { createInterface } from "node:readline/promises";
 import { ClickUpClient } from "./clickup.js";
 import { TaskFlowError } from "./errors.js";
 import { runCommand } from "./process.js";
@@ -13,12 +14,38 @@ export interface WorkflowOptions {
   taskId: string;
   clickUpToken: string;
   pullRequestDescription?: string;
+  confirmPromotion?: PromotionConfirmation;
 }
+
+export type PromotionConfirmation = (
+  masterBranch: string,
+  stagingBranch: string,
+) => Promise<boolean>;
 
 export interface PullRequestResult {
   role: keyof PullRequestBranches;
   targetBranch: string;
   url: string;
+}
+
+interface PullRequestInfo {
+  number: number;
+  url: string;
+  state: string;
+  mergedAt: string | null;
+  headRefOid: string;
+  createdAt: string;
+}
+
+interface RelevantPullRequest {
+  kind: "open" | "merged";
+  pullRequest: PullRequestInfo;
+}
+
+interface SubmissionTarget {
+  role: keyof PullRequestBranches;
+  targetBranch: string;
+  existing?: RelevantPullRequest;
 }
 
 export async function startWorkflow(
@@ -113,43 +140,121 @@ export async function submitWorkflow(
       "HEAD находится в detached-состоянии. Переключитесь на ветку перед submit.",
     );
   }
-  if (
-    featureBranch === config.branch ||
-    targets.some((target) => target.targetBranch === featureBranch)
-  ) {
+  const protectedBranches = new Set([
+    config.branch,
+    config.pullRequestBranches.master,
+    config.pullRequestBranches.staging,
+  ]);
+  if (protectedBranches.has(featureBranch)) {
     throw new TaskFlowError(
       `Нельзя выполнить submit из базовой/target-ветки "${featureBranch}".`,
     );
   }
 
-  await fetchPullRequestTargets(repository, config, targets);
-
-  await runCommand(
-    "git",
-    ["push", "--set-upstream", config.remote, featureBranch],
-    { cwd: repository.root, inheritOutput: true },
+  const flowTarget = targets[0];
+  if (!flowTarget) {
+    throw new TaskFlowError("Не удалось определить target-ветку pull request.");
+  }
+  const submissionTarget = await resolveSubmissionTarget(
+    repository,
+    config,
+    featureBranch,
+    flowTarget,
+    options.confirmPromotion ?? confirmPromotion,
   );
+  if (!submissionTarget) {
+    return [];
+  }
 
-  const pullRequests: PullRequestResult[] = [];
-  for (const target of targets) {
-    const url = await findOrCreatePullRequest(
-      repository,
-      config,
-      featureBranch,
-      target.targetBranch,
-      pullRequestBody,
+  const result: PullRequestResult = {
+    role: submissionTarget.role,
+    targetBranch: submissionTarget.targetBranch,
+    url: submissionTarget.existing?.pullRequest.url ?? "",
+  };
+
+  if (submissionTarget.existing?.kind !== "merged") {
+    await fetchPullRequestTargets(repository, config, [submissionTarget]);
+
+    await runCommand(
+      "git",
+      ["push", "--set-upstream", config.remote, featureBranch],
+      { cwd: repository.root, inheritOutput: true },
     );
-    pullRequests.push({ ...target, url });
+
+    result.url =
+      submissionTarget.existing?.pullRequest.url ??
+      (await createPullRequest(
+        repository,
+        config,
+        featureBranch,
+        submissionTarget.targetBranch,
+        pullRequestBody,
+      ));
   }
 
   await clickUp.updateRepositoryField(
     taskId,
     pullRequestFieldId,
     repository.nameWithOwner,
-    formatPullRequestFieldValue(pullRequests),
+    formatPullRequestFieldValue([result]),
   );
 
-  return pullRequests;
+  return [result];
+}
+
+async function resolveSubmissionTarget(
+  repository: RepositoryContext,
+  config: WorkflowConfig,
+  featureBranch: string,
+  flowTarget: Pick<PullRequestResult, "role" | "targetBranch">,
+  confirm: PromotionConfirmation,
+): Promise<SubmissionTarget | undefined> {
+  const flowPullRequest = await findRelevantPullRequest(
+    repository,
+    featureBranch,
+    flowTarget.targetBranch,
+  );
+
+  if (flowTarget.role !== "staging" || flowPullRequest?.kind !== "merged") {
+    return { ...flowTarget, ...(flowPullRequest ? { existing: flowPullRequest } : {}) };
+  }
+
+  const currentHead = (
+    await runCommand("git", ["rev-parse", "HEAD"], { cwd: repository.root })
+  ).stdout.trim();
+  if (currentHead !== flowPullRequest.pullRequest.headRefOid) {
+    throw new TaskFlowError(
+      "Feature-ветка содержит коммиты, которые не были протестированы на staging. Создайте и смержите новый staging PR перед promotion.",
+    );
+  }
+
+  const masterBranch = config.pullRequestBranches.master.trim();
+  if (masterBranch === flowTarget.targetBranch) {
+    throw new TaskFlowError(
+      "Для promotion pullRequestBranches.master и pullRequestBranches.staging должны указывать на разные ветки.",
+    );
+  }
+  const masterPullRequest = await findRelevantPullRequest(
+    repository,
+    featureBranch,
+    masterBranch,
+  );
+  if (masterPullRequest) {
+    return {
+      role: "master",
+      targetBranch: masterBranch,
+      existing: masterPullRequest,
+    };
+  }
+
+  const shouldPromote = await confirm(
+    masterBranch,
+    flowTarget.targetBranch,
+  );
+  if (!shouldPromote) {
+    return undefined;
+  }
+  return { role: "master", targetBranch: masterBranch };
 }
 
 async function fetchPullRequestTargets(
@@ -232,14 +337,12 @@ export function formatPullRequestBody(
     : ticketReference;
 }
 
-async function findOrCreatePullRequest(
+async function findRelevantPullRequest(
   repository: RepositoryContext,
-  config: WorkflowConfig,
   featureBranch: string,
   targetBranch: string,
-  pullRequestBody: string,
-): Promise<string> {
-  const existingPr = await runCommand(
+): Promise<RelevantPullRequest | undefined> {
+  const result = await runCommand(
     "gh",
     [
       "pr",
@@ -251,47 +354,133 @@ async function findOrCreatePullRequest(
       "--base",
       targetBranch,
       "--state",
-      "open",
+      "all",
+      "--limit",
+      "100",
       "--json",
-      "url",
-      "--jq",
-      ".[0].url",
+      "number,url,state,mergedAt,headRefOid,createdAt",
     ],
-    { cwd: repository.root, allowFailure: true },
+    { cwd: repository.root },
   );
 
-  let pullRequestUrl = existingPr.stdout.trim();
-  if (existingPr.exitCode !== 0 || !isHttpUrl(pullRequestUrl)) {
-    const args = [
-      "pr",
-      "create",
-      "--repo",
-      repository.nameWithOwner,
-      "--base",
-      targetBranch,
-      "--head",
-      featureBranch,
-      "--fill",
-      "--body",
-      pullRequestBody,
-    ];
-    if (config.draft) {
-      args.push("--draft");
+  let pullRequests: PullRequestInfo[];
+  try {
+    const parsed: unknown = JSON.parse(result.stdout);
+    if (!Array.isArray(parsed)) {
+      throw new Error("ожидался массив");
     }
-
-    const createdPr = await runCommand("gh", args, {
-      cwd: repository.root,
-      inheritOutput: true,
-    });
-    pullRequestUrl = extractHttpUrl(createdPr.stdout);
+    pullRequests = parsed.filter(isPullRequestInfo);
+  } catch (error) {
+    throw new TaskFlowError(
+      `GitHub CLI вернул некорректные данные о PR для target-ветки "${targetBranch}".`,
+      { cause: error },
+    );
   }
 
+  pullRequests.sort(
+    (left, right) =>
+      Date.parse(right.createdAt) - Date.parse(left.createdAt),
+  );
+  const open = pullRequests.find(
+    (pullRequest) => pullRequest.state.toLowerCase() === "open",
+  );
+  if (open) {
+    return { kind: "open", pullRequest: open };
+  }
+  const merged = pullRequests.find(
+    (pullRequest) =>
+      pullRequest.state.toLowerCase() === "merged" ||
+      Boolean(pullRequest.mergedAt),
+  );
+  return merged ? { kind: "merged", pullRequest: merged } : undefined;
+}
+
+async function createPullRequest(
+  repository: RepositoryContext,
+  config: WorkflowConfig,
+  featureBranch: string,
+  targetBranch: string,
+  pullRequestBody: string,
+): Promise<string> {
+  const args = [
+    "pr",
+    "create",
+    "--repo",
+    repository.nameWithOwner,
+    "--base",
+    targetBranch,
+    "--head",
+    featureBranch,
+    "--fill",
+    "--body",
+    pullRequestBody,
+  ];
+  if (config.draft) {
+    args.push("--draft");
+  }
+
+  const createdPr = await runCommand("gh", args, {
+    cwd: repository.root,
+    inheritOutput: true,
+  });
+  const pullRequestUrl = extractHttpUrl(createdPr.stdout);
   if (!pullRequestUrl) {
     throw new TaskFlowError(
       `GitHub CLI не вернул URL pull request для target-ветки "${targetBranch}".`,
     );
   }
   return pullRequestUrl;
+}
+
+export async function confirmPromotion(
+  masterBranch: string,
+  stagingBranch: string,
+): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new TaskFlowError(
+      `PR в "${stagingBranch}" уже смержен, но promotion требует интерактивного терминала. Запустите task-flow submit вручную.`,
+    );
+  }
+
+  process.stdout.write(`PR to ${stagingBranch} is already merged.\n`);
+  const readline = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    while (true) {
+      const answer = await readline.question(
+        `Press Enter to open PR to ${masterBranch} or q to cancel: `,
+      );
+      const normalizedAnswer = answer.trim().toLowerCase();
+      if (!normalizedAnswer) {
+        return true;
+      }
+      if (normalizedAnswer === "q") {
+        return false;
+      }
+      process.stdout.write("Press Enter or q.\n");
+    }
+  } finally {
+    readline.close();
+  }
+}
+
+function isPullRequestInfo(value: unknown): value is PullRequestInfo {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const pullRequest = value as Record<string, unknown>;
+  return (
+    typeof pullRequest.number === "number" &&
+    typeof pullRequest.url === "string" &&
+    isHttpUrl(pullRequest.url) &&
+    typeof pullRequest.state === "string" &&
+    (typeof pullRequest.mergedAt === "string" ||
+      pullRequest.mergedAt === null) &&
+    typeof pullRequest.headRefOid === "string" &&
+    typeof pullRequest.createdAt === "string"
+  );
 }
 
 function requireFieldId(
