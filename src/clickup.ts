@@ -106,6 +106,17 @@ export class ClickUpClient {
     return { name, url };
   }
 
+  async getTaskName(taskId: string): Promise<string> {
+    const task = await this.#getTask(taskId);
+    const name = task.name?.trim();
+    if (!name) {
+      throw new TaskFlowError(
+        "ClickUp API не вернул название задачи, необходимое для commit.",
+      );
+    }
+    return name;
+  }
+
   #getTask(taskId: string): Promise<ClickUpTask> {
     const existing = this.#tasks.get(taskId);
     if (existing) {

@@ -1,13 +1,14 @@
 {
   "name": "@lilflexer/task-flow-cli",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Global GitHub and ClickUp task workflow CLI",
   "type": "module",
   "bin": {
-    "task-flow": "./dist/index.js",
-    "tf": "./dist/index.js",
-    "tfs": "./dist/start.js",
-    "tfsub": "./dist/submit.js"
+    "task-flow": "dist/index.js",
+    "tf": "dist/index.js",
+    "tfc": "dist/commit.js",
+    "tfs": "dist/start.js",
+    "tfsub": "dist/submit.js"
   },
   "files": [
     "dist",

@@ -19,6 +19,15 @@ export interface WorkflowOptions {
   pushSubmissionBranch?: boolean;
 }
 
+export interface CommitWorkflowOptions {
+  repository: RepositoryContext;
+  config: WorkflowConfig;
+  taskId: string;
+  clickUpToken: string;
+  stagedOnly: boolean;
+  noVerify: boolean;
+}
+
 export type PromotionConfirmation = (
   masterBranch: string,
   stagingBranch: string,
@@ -103,6 +112,33 @@ export async function startWorkflow(
   );
 
   return featureBranch;
+}
+
+export async function commitWorkflow(
+  options: CommitWorkflowOptions,
+): Promise<string> {
+  const clickUp = new ClickUpClient(
+    options.clickUpToken,
+    options.config.clickup,
+  );
+  const taskName = await clickUp.getTaskName(options.taskId);
+
+  if (!options.stagedOnly) {
+    await runCommand("git", ["add", "."], {
+      cwd: options.repository.root,
+      inheritOutput: true,
+    });
+  }
+
+  const commitArgs = ["commit", "-m", taskName];
+  if (options.noVerify) {
+    commitArgs.push("--no-verify");
+  }
+  await runCommand("git", commitArgs, {
+    cwd: options.repository.root,
+    inheritOutput: true,
+  });
+  return taskName;
 }
 
 export async function submitWorkflow(

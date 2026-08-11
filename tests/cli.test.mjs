@@ -64,6 +64,25 @@ test("submit accepts an optional branch name or task ID", () => {
   );
 });
 
+test("commit accepts staged and no-verify options", () => {
+  assert.deepEqual(parseCli(["commit", "--staged", "-n"]), {
+    command: "commit",
+    staged: true,
+    noVerify: true,
+    config: {},
+    help: false,
+    version: false,
+  });
+  assert.throws(
+    () => parseCli(["commit", "unexpected"]),
+    /Лишние позиционные аргументы/,
+  );
+  assert.throws(
+    () => parseCli(["start", "task-id", "--no-verify"]),
+    /только для команды commit/,
+  );
+});
+
 test("submit selection prefers mapped branches and falls back to task IDs", () => {
   const tasks = {
     "current-branch": "current-task",
@@ -99,7 +118,7 @@ test("submit selection prefers mapped branches and falls back to task IDs", () =
 });
 
 test("full and short command entry points are executable", async () => {
-  for (const entryPoint of ["index.js", "start.js", "submit.js"]) {
+  for (const entryPoint of ["commit.js", "index.js", "start.js", "submit.js"]) {
     const path = fileURLToPath(new URL(`../dist/${entryPoint}`, import.meta.url));
     assert.notEqual((await stat(path)).mode & 0o111, 0);
   }
@@ -108,6 +127,7 @@ test("full and short command entry points are executable", async () => {
   assert.deepEqual(packageJson.bin, {
     "task-flow": "./dist/index.js",
     tf: "./dist/index.js",
+    tfc: "./dist/commit.js",
     tfs: "./dist/start.js",
     tfsub: "./dist/submit.js",
   });

@@ -11,25 +11,29 @@ import { TaskFlowError } from "./errors.js";
 import { resolveRepository } from "./repository.js";
 import type { ConfigLayer } from "./types.js";
 import {
+  commitWorkflow,
   getCurrentBranch,
   startWorkflow,
   submitWorkflow,
 } from "./workflow.js";
 
-const VERSION = "1.4.0";
+const VERSION = "1.4.1";
 
 const HELP = `task-flow — глобальный GitHub/ClickUp workflow CLI
 
 Использование:
   task-flow start <taskId> [branch-name]
   task-flow submit [branch-name | taskId]
+  task-flow commit
   tfs <taskId> [branch-name]
   tfsub [branch-name | taskId]
+  tfc
   task-flow --help
 
 Команды:
   start    Создать или открыть <branch-prefix>/<taskId> и записать ветку в ClickUp
   submit   Push текущей ветки, найти/создать PR и записать его URL в ClickUp
+  commit   Stage изменений и commit с названием задачи ClickUp
 
 Параметры:
   --taskId <id>                    ID задачи ClickUp (устаревшая форма)
@@ -42,6 +46,8 @@ const HELP = `task-flow — глобальный GitHub/ClickUp workflow CLI
   --remote <name>                  Git remote
   --pull / --no-pull               Включить/выключить pull базовой ветки
   --draft / --no-draft             Создавать draft pull request
+  --staged                          Commit только уже staged изменений
+  -n, --no-verify                  Пропустить Git commit hooks
   --branch-field-id <id>           ClickUp field ID для веток
   --production-pull-request-field-id <id>  ClickUp field ID для production PR
   --staging-pull-request-field-id <id>     ClickUp field ID для staging PR
@@ -58,10 +64,12 @@ const HELP = `task-flow — глобальный GitHub/ClickUp workflow CLI
 `;
 
 interface ParsedCli {
-  command?: "start" | "submit";
+  command?: "start" | "submit" | "commit";
   taskId?: string;
   submitTarget?: string;
   description?: string;
+  staged?: true;
+  noVerify?: true;
   config: ConfigLayer;
   help: boolean;
   version: boolean;
@@ -119,6 +127,30 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
     process.stdout.write(
       `Готово: ${repository.nameWithOwner}: ${branch}\n`,
     );
+    return;
+  }
+
+  if (parsed.command === "commit") {
+    const currentBranch = await getCurrentBranch(repository);
+    const taskId = getRepositoryTasks(
+      file,
+      repository.nameWithOwner,
+    )[currentBranch]?.trim();
+    if (!taskId) {
+      throw new TaskFlowError(
+        `Для ветки "${currentBranch}" не найден taskId в repositories["${repository.nameWithOwner}"].tasks. Сначала выполните task-flow start.`,
+      );
+    }
+    const clickUpToken = await readClickUpToken();
+    const taskName = await commitWorkflow({
+      repository,
+      config,
+      taskId,
+      clickUpToken,
+      stagedOnly: parsed.staged === true,
+      noVerify: parsed.noVerify === true,
+    });
+    process.stdout.write(`Готово: commit "${taskName}"\n`);
     return;
   }
 
@@ -185,6 +217,8 @@ export function parseCli(argv: string[]): ParsedCli {
         "no-pull": { type: "boolean" },
         draft: { type: "boolean" },
         "no-draft": { type: "boolean" },
+        staged: { type: "boolean" },
+        "no-verify": { type: "boolean", short: "n" },
         "branch-field-id": { type: "string" },
         "production-pull-request-field-id": { type: "string" },
         "staging-pull-request-field-id": { type: "string" },
@@ -207,10 +241,11 @@ export function parseCli(argv: string[]): ParsedCli {
   if (
     commandValue !== undefined &&
     commandValue !== "start" &&
-    commandValue !== "submit"
+    commandValue !== "submit" &&
+    commandValue !== "commit"
   ) {
     throw new TaskFlowError(
-      `Неизвестная команда "${commandValue}". Используйте start или submit.`,
+      `Неизвестная команда "${commandValue}". Используйте start, submit или commit.`,
     );
   }
   const values = parsed.values;
@@ -220,6 +255,11 @@ export function parseCli(argv: string[]): ParsedCli {
   if (values.draft && values["no-draft"]) {
     throw new TaskFlowError(
       "Нельзя одновременно указать --draft и --no-draft.",
+    );
+  }
+  if (commandValue !== "commit" && (values.staged || values["no-verify"])) {
+    throw new TaskFlowError(
+      "Параметры --staged и --no-verify доступны только для команды commit.",
     );
   }
 
@@ -314,6 +354,17 @@ export function parseCli(argv: string[]): ParsedCli {
         "Нельзя одновременно передать branch/taskId и --taskId.",
       );
     }
+  } else if (commandValue === "commit") {
+    if (parsed.positionals.length > 1) {
+      throw new TaskFlowError(
+        `Лишние позиционные аргументы: ${parsed.positionals.slice(1).join(" ")}`,
+      );
+    }
+    if (taskId !== undefined) {
+      throw new TaskFlowError(
+        "Команда commit получает taskId из mapping текущей ветки и не принимает --taskId.",
+      );
+    }
   } else if (parsed.positionals.length > 1) {
     throw new TaskFlowError(
       `Лишние позиционные аргументы: ${parsed.positionals.slice(1).join(" ")}`,
@@ -327,6 +378,8 @@ export function parseCli(argv: string[]): ParsedCli {
     ...(typeof values.description === "string"
       ? { description: values.description }
       : {}),
+    ...(values.staged === true ? { staged: true as const } : {}),
+    ...(values["no-verify"] === true ? { noVerify: true as const } : {}),
     config,
     help: values.help === true,
     version: values.version === true,

@@ -21,6 +21,7 @@ npm link
 ```bash
 task-flow --help
 tf --help
+tfc --help
 tfs --help
 tfsub --help
 ```
@@ -183,6 +184,37 @@ task-flow submit 86cb1ewr4
 tfsub 86cb1ewr4
 ```
 
+### Commit с названием задачи
+
+Создать commit с названием связанной ClickUp-задачи:
+
+```bash
+task-flow commit
+tfc
+```
+
+CLI находит task ID текущей ветки в repository `tasks`, получает название
+задачи, выполняет из корня репозитория:
+
+```bash
+git add .
+git commit -m "<ClickUp task name>"
+```
+
+Чтобы commit-ить только уже staged изменения, не выполняя `git add .`:
+
+```bash
+tfc --staged
+```
+
+Git commit hooks можно пропустить стандартной короткой или полной опцией:
+
+```bash
+tfc -n
+tfc --no-verify
+tfc --staged --no-verify
+```
+
 При создании PR его body всегда начинается с названия и URL задачи ClickUp.
 Дополнительное описание передаётся через `--description`:
 
@@ -232,6 +264,7 @@ task-flow submit \
 | Полная форма | Короткая форма |
 | --- | --- |
 | `task-flow` | `tf` |
+| `task-flow commit` | `tfc` |
 | `task-flow start TASK_ID [BRANCH]` | `tfs TASK_ID [BRANCH]` |
 | `task-flow submit [BRANCH_OR_TASK_ID]` | `tfsub [BRANCH_OR_TASK_ID]` |
 
