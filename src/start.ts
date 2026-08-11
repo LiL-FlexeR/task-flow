@@ -2,4 +2,4 @@
 
 import { runMain } from "./main.js";
 
-await runMain(process.argv.slice(2));
+await runMain(["start", ...process.argv.slice(2)], "tfs");

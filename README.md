@@ -16,10 +16,13 @@ npm run build
 npm link
 ```
 
-После `npm link` команда доступна глобально:
+После `npm link` доступны полная команда и короткие aliases:
 
 ```bash
 task-flow --help
+tf --help
+tfs --help
+tfsub --help
 ```
 
 Чтобы удалить link, выполните
@@ -54,6 +57,9 @@ task-flow --help
       "pullRequestBranches": {
         "master": "master",
         "staging": "staging"
+      },
+      "tasks": {
+        "remove-bottom-blur": "86cb1ewr4"
       }
     },
     "company/backend": {
@@ -93,6 +99,21 @@ task-flow --help
   имеет приоритет над поиском по имени;
 - `clickup.teamId` — требуется только при использовании custom task IDs.
 
+Каждый repository override также может содержать `tasks` — автоматически
+поддерживаемое соответствие полного имени feature-ветки и ClickUp task ID:
+
+```json
+{
+  "tasks": {
+    "remove-bottom-blur": "86cb1ewr4",
+    "feat/86cavbfx9": "86cavbfx9"
+  }
+}
+```
+
+Одна ветка не может быть связана с разными задачами. При конфликте CLI
+завершается с ошибкой и не перезаписывает существующий task ID.
+
 Итоговое значение выбирается в порядке:
 
 ```text
@@ -123,14 +144,43 @@ CLICKUP_API_TOKEN=pk_...
 
 ```bash
 cd ~/project/frontend/packages/some-package
-task-flow start --branch=master --taskId=86cavbfx9
+task-flow start 86cavbfx9 --branch=master
 ```
 
-Опубликовать текущую ветку, прочитать `Deploy Flow`, найти существующие или
-создать необходимые PR и записать их URL в ClickUp:
+Передать полное пользовательское имя ветки можно вторым аргументом:
 
 ```bash
-task-flow submit --taskId=86cavbfx9
+task-flow start 86cb1ewr4 remove-bottom-blur
+tfs 86cb1ewr4 remove-bottom-blur
+```
+
+После успешного `start` CLI сохраняет полученную ветку и task ID в
+`repositories["owner/repository"].tasks` глобального config.
+
+Опубликовать текущую ветку, найти её task ID в config, прочитать `Deploy Flow`,
+найти или создать PR и записать URL в ClickUp:
+
+```bash
+task-flow submit
+tfsub
+```
+
+Можно явно передать имя любой сохранённой ветки:
+
+```bash
+task-flow submit remove-bottom-blur
+tfsub remove-bottom-blur
+```
+
+Если эта ветка не является текущей, CLI проверяет её наличие в remote,
+не выполняет `git push` и открывает PR с этой remote-веткой в качестве head.
+
+Для обратной совместимости аргумент без соответствующей записи в `tasks`
+считается task ID и связывается с текущей веткой после успешного submit:
+
+```bash
+task-flow submit 86cb1ewr4
+tfsub 86cb1ewr4
 ```
 
 При создании PR его body всегда начинается с названия и URL задачи ClickUp.
@@ -138,7 +188,7 @@ task-flow submit --taskId=86cavbfx9
 
 ```bash
 task-flow submit \
-  --taskId=86cavbfx9 \
+  86cavbfx9 \
   --description="Implemented API validation and updated tests"
 ```
 
@@ -156,7 +206,7 @@ Implemented API validation and updated tests
 
 ```bash
 task-flow start \
-  --taskId=86cavbfx9 \
+  86cavbfx9 \
   --branch=main \
   --pr-master-branch=main \
   --pr-staging-branch=staging \
@@ -165,7 +215,7 @@ task-flow start \
   --branch-field-id=custom-field-id
 
 task-flow submit \
-  --taskId=86cavbfx9 \
+  86cavbfx9 \
   --description="Implementation details" \
   --pr-master-branch=master \
   --pr-staging-branch=staging \
@@ -177,10 +227,18 @@ task-flow submit \
 
 Полный список параметров: `task-flow --help`.
 
+Полные и короткие формы эквивалентны:
+
+| Полная форма | Короткая форма |
+| --- | --- |
+| `task-flow` | `tf` |
+| `task-flow start TASK_ID [BRANCH]` | `tfs TASK_ID [BRANCH]` |
+| `task-flow submit [BRANCH_OR_TASK_ID]` | `tfsub [BRANCH_OR_TASK_ID]` |
+
 ## Deploy Flow и target-ветки PR
 
-Перед `git push` команда `submit` читает custom field `Deploy Flow` из задачи
-ClickUp. Поддерживаются два значения:
+Команда `submit` читает custom field `Deploy Flow` из связанной задачи ClickUp.
+Поддерживаются два значения:
 
 | Deploy Flow | Создаваемые PR |
 | --- | --- |
@@ -201,8 +259,8 @@ staging-ветку:
 
 - если PR отсутствует, он создаётся;
 - если PR открыт, CLI использует существующий URL и не создаёт дубликат;
-- если PR смержен, CLI проверяет, что текущий `HEAD` совпадает с последним
-  протестированным commit этого PR;
+- если PR смержен, CLI проверяет, что commit выбранной feature-ветки совпадает
+  с последним протестированным commit этого PR;
 - если master PR уже открыт или смержен, используется его существующий URL;
 - иначе CLI предлагает promotion:
 

@@ -15,6 +15,8 @@ export interface WorkflowOptions {
   clickUpToken: string;
   pullRequestDescription?: string;
   confirmPromotion?: PromotionConfirmation;
+  submissionBranch?: string;
+  pushSubmissionBranch?: boolean;
 }
 
 export type PromotionConfirmation = (
@@ -107,6 +109,32 @@ export async function submitWorkflow(
   options: WorkflowOptions,
 ): Promise<PullRequestResult[]> {
   const { repository, config, taskId } = options;
+  const featureBranch =
+    options.submissionBranch !== undefined
+      ? options.submissionBranch.trim()
+      : await getCurrentBranch(repository);
+  if (!featureBranch) {
+    throw new TaskFlowError("Имя feature-ветки для submit не может быть пустым.");
+  }
+  await runCommand("git", ["check-ref-format", "--branch", featureBranch], {
+    cwd: repository.root,
+  });
+
+  const protectedBranches = new Set([
+    config.branch,
+    config.pullRequestBranches.master,
+    config.pullRequestBranches.staging,
+  ]);
+  if (protectedBranches.has(featureBranch)) {
+    throw new TaskFlowError(
+      `Нельзя выполнить submit из базовой/target-ветки "${featureBranch}".`,
+    );
+  }
+  const shouldPushFeatureBranch = options.pushSubmissionBranch ?? true;
+  const remoteFeatureHeadOid = shouldPushFeatureBranch
+    ? undefined
+    : await getRemoteBranchOid(repository, config, featureBranch);
+
   const clickUp = new ClickUpClient(options.clickUpToken, config.clickup);
   const deployFlow = await clickUp.getCustomFieldValue(taskId, {
     ...(config.clickup.deployFlowFieldId
@@ -125,28 +153,6 @@ export async function submitWorkflow(
     options.pullRequestDescription,
   );
 
-  const branchResult = await runCommand(
-    "git",
-    ["branch", "--show-current"],
-    { cwd: repository.root },
-  );
-  const featureBranch = branchResult.stdout.trim();
-  if (!featureBranch) {
-    throw new TaskFlowError(
-      "HEAD находится в detached-состоянии. Переключитесь на ветку перед submit.",
-    );
-  }
-  const protectedBranches = new Set([
-    config.branch,
-    config.pullRequestBranches.master,
-    config.pullRequestBranches.staging,
-  ]);
-  if (protectedBranches.has(featureBranch)) {
-    throw new TaskFlowError(
-      `Нельзя выполнить submit из базовой/target-ветки "${featureBranch}".`,
-    );
-  }
-
   const flowTarget = targets[0];
   if (!flowTarget) {
     throw new TaskFlowError("Не удалось определить target-ветку pull request.");
@@ -157,6 +163,7 @@ export async function submitWorkflow(
     featureBranch,
     flowTarget,
     options.confirmPromotion ?? confirmPromotion,
+    remoteFeatureHeadOid,
   );
   if (!submissionTarget) {
     return [];
@@ -185,11 +192,13 @@ export async function submitWorkflow(
   if (submissionTarget.existing?.kind !== "merged") {
     await fetchPullRequestTargets(repository, config, [submissionTarget]);
 
-    await runCommand(
-      "git",
-      ["push", "--set-upstream", config.remote, featureBranch],
-      { cwd: repository.root, inheritOutput: true },
-    );
+    if (shouldPushFeatureBranch) {
+      await runCommand(
+        "git",
+        ["push", "--set-upstream", config.remote, featureBranch],
+        { cwd: repository.root, inheritOutput: true },
+      );
+    }
 
     result.url =
       submissionTarget.existing?.pullRequest.url ??
@@ -218,6 +227,7 @@ async function resolveSubmissionTarget(
   featureBranch: string,
   flowTarget: Pick<PullRequestResult, "role" | "targetBranch">,
   confirm: PromotionConfirmation,
+  knownFeatureHeadOid?: string,
 ): Promise<SubmissionTarget | undefined> {
   const flowPullRequest = await findRelevantPullRequest(
     repository,
@@ -229,10 +239,16 @@ async function resolveSubmissionTarget(
     return { ...flowTarget, ...(flowPullRequest ? { existing: flowPullRequest } : {}) };
   }
 
-  const currentHead = (
-    await runCommand("git", ["rev-parse", "HEAD"], { cwd: repository.root })
-  ).stdout.trim();
-  if (currentHead !== flowPullRequest.pullRequest.headRefOid) {
+  const featureHeadOid =
+    knownFeatureHeadOid ??
+    (
+      await runCommand(
+        "git",
+        ["rev-parse", "--verify", `refs/heads/${featureBranch}`],
+        { cwd: repository.root },
+      )
+    ).stdout.trim();
+  if (featureHeadOid !== flowPullRequest.pullRequest.headRefOid) {
     throw new TaskFlowError(
       "Feature-ветка содержит коммиты, которые не были протестированы на staging. Создайте и смержите новый staging PR перед promotion.",
     );
@@ -265,6 +281,51 @@ async function resolveSubmissionTarget(
     return undefined;
   }
   return { role: "master", targetBranch: masterBranch };
+}
+
+export async function getCurrentBranch(
+  repository: RepositoryContext,
+): Promise<string> {
+  const branchResult = await runCommand(
+    "git",
+    ["branch", "--show-current"],
+    { cwd: repository.root },
+  );
+  const branchName = branchResult.stdout.trim();
+  if (!branchName) {
+    throw new TaskFlowError(
+      "HEAD находится в detached-состоянии. Переключитесь на ветку перед submit.",
+    );
+  }
+  return branchName;
+}
+
+async function getRemoteBranchOid(
+  repository: RepositoryContext,
+  config: WorkflowConfig,
+  branchName: string,
+): Promise<string> {
+  const result = await runCommand(
+    "git",
+    [
+      "ls-remote",
+      "--exit-code",
+      "--heads",
+      config.remote,
+      `refs/heads/${branchName}`,
+    ],
+    { cwd: repository.root, allowFailure: true },
+  );
+  const oid = result.stdout.trim().split(/\s+/)[0];
+  if (result.exitCode !== 0 || !oid || !/^[0-9a-f]+$/i.test(oid)) {
+    const details = result.stderr.trim();
+    throw new TaskFlowError(
+      `Ветка "${branchName}" не найдена в remote "${config.remote}"${
+        details ? `: ${details}` : "."
+      }`,
+    );
+  }
+  return oid;
 }
 
 async function fetchPullRequestTargets(

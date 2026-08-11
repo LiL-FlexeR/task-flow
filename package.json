@@ -4,7 +4,10 @@
   "description": "Global GitHub and ClickUp task workflow CLI",
   "type": "module",
   "bin": {
-    "task-flow": "./dist/index.js"
+    "task-flow": "./dist/index.js",
+    "tf": "./dist/index.js",
+    "tfs": "./dist/start.js",
+    "tfsub": "./dist/submit.js"
   },
   "files": [
     "dist",

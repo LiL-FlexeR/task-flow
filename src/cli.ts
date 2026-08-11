@@ -1,17 +1,30 @@
 import { parseArgs } from "node:util";
-import { loadConfigFile, readClickUpToken, resolveConfig } from "./config.js";
+import {
+  getRepositoryTasks,
+  loadConfigFile,
+  readClickUpToken,
+  resolveConfig,
+  setRepositoryTask,
+  writeConfigFile,
+} from "./config.js";
 import { TaskFlowError } from "./errors.js";
 import { resolveRepository } from "./repository.js";
 import type { ConfigLayer } from "./types.js";
-import { startWorkflow, submitWorkflow } from "./workflow.js";
+import {
+  getCurrentBranch,
+  startWorkflow,
+  submitWorkflow,
+} from "./workflow.js";
 
 const VERSION = "1.4.0";
 
 const HELP = `task-flow — глобальный GitHub/ClickUp workflow CLI
 
 Использование:
-  task-flow start  --branch=master --taskId=86cavbfx9
-  task-flow submit --taskId=86cavbfx9
+  task-flow start <taskId> [branch-name]
+  task-flow submit [branch-name | taskId]
+  tfs <taskId> [branch-name]
+  tfsub [branch-name | taskId]
   task-flow --help
 
 Команды:
@@ -19,7 +32,7 @@ const HELP = `task-flow — глобальный GitHub/ClickUp workflow CLI
   submit   Push текущей ветки, найти/создать PR и записать его URL в ClickUp
 
 Параметры:
-  --taskId <id>                    ID задачи ClickUp (обязательный)
+  --taskId <id>                    ID задачи ClickUp (устаревшая форма)
   --description <text>             Дополнительное описание pull request
   --branch <name>                  Базовая ветка
   --pr-master-branch <name>        Target PR для Production/promotion
@@ -47,6 +60,7 @@ const HELP = `task-flow — глобальный GitHub/ClickUp workflow CLI
 interface ParsedCli {
   command?: "start" | "submit";
   taskId?: string;
+  submitTarget?: string;
   description?: string;
   config: ConfigLayer;
   help: boolean;
@@ -63,9 +77,9 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
     process.stdout.write(HELP);
     return;
   }
-  if (!parsed.taskId?.trim()) {
+  if (parsed.command === "start" && !parsed.taskId?.trim()) {
     throw new TaskFlowError(
-      `Для команды ${parsed.command} требуется --taskId <id>.`,
+      "Для команды start требуется <taskId>.",
     );
   }
 
@@ -77,26 +91,68 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
     parsed.config,
   );
   validateResolvedConfig(config);
-  const clickUpToken = await readClickUpToken();
-  const workflowOptions = {
-    repository,
-    config,
-    taskId: parsed.taskId,
-    clickUpToken,
-    ...(parsed.description !== undefined
-      ? { pullRequestDescription: parsed.description }
-      : {}),
-  };
 
   if (parsed.command === "start") {
+    const taskId = parsed.taskId?.trim() ?? "";
+    const featureBranch =
+      config.featureBranch?.trim() || `${config.branchPrefix}/${taskId}`;
+    const mappingChanged = setRepositoryTask(
+      file,
+      repository.nameWithOwner,
+      featureBranch,
+      taskId,
+    );
+    const clickUpToken = await readClickUpToken();
+    const workflowOptions = {
+      repository,
+      config,
+      taskId,
+      clickUpToken,
+      ...(parsed.description !== undefined
+        ? { pullRequestDescription: parsed.description }
+        : {}),
+    };
     const branch = await startWorkflow(workflowOptions);
+    if (mappingChanged) {
+      await writeConfigFile(file);
+    }
     process.stdout.write(
       `Готово: ${repository.nameWithOwner}: ${branch}\n`,
     );
     return;
   }
 
+  const currentBranch = await getCurrentBranch(repository);
+  const selection = resolveSubmitSelection(
+    getRepositoryTasks(file, repository.nameWithOwner),
+    currentBranch,
+    parsed.submitTarget,
+    parsed.taskId,
+  );
+  const mappingChanged = selection.storeMapping
+    ? setRepositoryTask(
+        file,
+        repository.nameWithOwner,
+        selection.branchName,
+        selection.taskId,
+      )
+    : false;
+  const clickUpToken = await readClickUpToken();
+  const workflowOptions = {
+    repository,
+    config,
+    taskId: selection.taskId,
+    clickUpToken,
+    submissionBranch: selection.branchName,
+    pushSubmissionBranch: selection.branchName === currentBranch,
+    ...(parsed.description !== undefined
+      ? { pullRequestDescription: parsed.description }
+      : {}),
+  };
   const pullRequests = await submitWorkflow(workflowOptions);
+  if (mappingChanged) {
+    await writeConfigFile(file);
+  }
   if (pullRequests.length === 0) {
     process.stdout.write("Cancelled.\n");
     return;
@@ -157,12 +213,6 @@ export function parseCli(argv: string[]): ParsedCli {
       `Неизвестная команда "${commandValue}". Используйте start или submit.`,
     );
   }
-  if (parsed.positionals.length > 1) {
-    throw new TaskFlowError(
-      `Лишние позиционные аргументы: ${parsed.positionals.slice(1).join(" ")}`,
-    );
-  }
-
   const values = parsed.values;
   if (values.pull && values["no-pull"]) {
     throw new TaskFlowError("Нельзя одновременно указать --pull и --no-pull.");
@@ -227,17 +277,114 @@ export function parseCli(argv: string[]): ParsedCli {
     config.clickup = clickup;
   }
 
+  let taskId =
+    typeof values.taskId === "string" ? values.taskId : undefined;
+  let submitTarget: string | undefined;
+  if (commandValue === "start") {
+    if (parsed.positionals.length > 3) {
+      throw new TaskFlowError(
+        `Лишние позиционные аргументы: ${parsed.positionals.slice(3).join(" ")}`,
+      );
+    }
+    const positionalTaskId = parsed.positionals[1];
+    const positionalBranch = parsed.positionals[2];
+    if (positionalTaskId !== undefined && taskId !== undefined) {
+      throw new TaskFlowError(
+        "Нельзя одновременно передать позиционный taskId и --taskId.",
+      );
+    }
+    taskId = positionalTaskId ?? taskId;
+    if (positionalBranch !== undefined) {
+      if (config.featureBranch !== undefined) {
+        throw new TaskFlowError(
+          "Нельзя одновременно передать позиционное имя ветки и --feature-branch.",
+        );
+      }
+      config.featureBranch = positionalBranch;
+    }
+  } else if (commandValue === "submit") {
+    if (parsed.positionals.length > 2) {
+      throw new TaskFlowError(
+        `Лишние позиционные аргументы: ${parsed.positionals.slice(2).join(" ")}`,
+      );
+    }
+    submitTarget = parsed.positionals[1];
+    if (submitTarget !== undefined && taskId !== undefined) {
+      throw new TaskFlowError(
+        "Нельзя одновременно передать branch/taskId и --taskId.",
+      );
+    }
+  } else if (parsed.positionals.length > 1) {
+    throw new TaskFlowError(
+      `Лишние позиционные аргументы: ${parsed.positionals.slice(1).join(" ")}`,
+    );
+  }
+
   return {
     ...(commandValue ? { command: commandValue } : {}),
-    ...(typeof values.taskId === "string"
-      ? { taskId: values.taskId }
-      : {}),
+    ...(taskId !== undefined ? { taskId } : {}),
+    ...(submitTarget !== undefined ? { submitTarget } : {}),
     ...(typeof values.description === "string"
       ? { description: values.description }
       : {}),
     config,
     help: values.help === true,
     version: values.version === true,
+  };
+}
+
+export interface SubmitSelection {
+  branchName: string;
+  taskId: string;
+  storeMapping: boolean;
+}
+
+export function resolveSubmitSelection(
+  tasks: Readonly<Record<string, string>>,
+  currentBranch: string,
+  submitTarget?: string,
+  explicitTaskId?: string,
+): SubmitSelection {
+  const normalizedCurrentBranch = currentBranch.trim();
+  const normalizedTarget = submitTarget?.trim();
+  const normalizedExplicitTaskId = explicitTaskId?.trim();
+
+  if (normalizedTarget) {
+    const mappedTaskId = tasks[normalizedTarget]?.trim();
+    if (mappedTaskId) {
+      return {
+        branchName: normalizedTarget,
+        taskId: mappedTaskId,
+        storeMapping: false,
+      };
+    }
+  }
+
+  const taskId = normalizedExplicitTaskId || normalizedTarget;
+  if (taskId) {
+    const currentTaskId = tasks[normalizedCurrentBranch]?.trim();
+    if (currentTaskId && currentTaskId !== taskId) {
+      throw new TaskFlowError(
+        `Ветка "${normalizedCurrentBranch}" уже связана с задачей "${currentTaskId}".`,
+      );
+    }
+    return {
+      branchName: normalizedCurrentBranch,
+      taskId,
+      storeMapping: !currentTaskId,
+    };
+  }
+
+  const currentTaskId = tasks[normalizedCurrentBranch]?.trim();
+  if (!currentTaskId) {
+    throw new TaskFlowError(
+      `Для ветки "${normalizedCurrentBranch}" не найден taskId в repositories[repo].tasks. Передайте branchName или taskId явно.`,
+    );
+  }
+  return {
+    branchName: normalizedCurrentBranch,
+    taskId: currentTaskId,
+    storeMapping: false,
   };
 }
 

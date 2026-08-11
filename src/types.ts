@@ -35,9 +35,13 @@ export interface ConfigLayer {
   clickup?: Partial<ClickUpConfig>;
 }
 
+export interface RepositoryConfig extends ConfigLayer {
+  tasks?: Record<string, string>;
+}
+
 export interface ConfigFile {
   defaults?: ConfigLayer;
-  repositories?: Record<string, ConfigLayer>;
+  repositories?: Record<string, RepositoryConfig>;
 }
 
 export interface RepositoryContext {

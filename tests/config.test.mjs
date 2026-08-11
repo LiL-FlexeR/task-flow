@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { parseEnv, resolveConfig } from "../dist/config.js";
+import {
+  getRepositoryTasks,
+  loadConfigFile,
+  parseEnv,
+  resolveConfig,
+  setRepositoryTask,
+  writeConfigFile,
+} from "../dist/config.js";
 
 test("config precedence is CLI > repository > defaults", () => {
   const config = resolveConfig(
@@ -105,6 +115,56 @@ test("repository-specific PR branch overrides the default", () => {
   assert.deepEqual(config.pullRequestBranches, {
     master: "master",
     staging: "staging",
+  });
+});
+
+test("repository task mappings are persisted and cannot be reassigned", async () => {
+  const file = {
+    repositories: {
+      "company/backend": {
+        tasks: { "existing-branch": "old-task" },
+      },
+    },
+  };
+
+  assert.equal(
+    setRepositoryTask(
+      file,
+      "company/frontend",
+      "remove-bottom-blur",
+      "86cb1ewr4",
+    ),
+    true,
+  );
+  assert.equal(
+    setRepositoryTask(
+      file,
+      "company/frontend",
+      "remove-bottom-blur",
+      "86cb1ewr4",
+    ),
+    false,
+  );
+  assert.throws(
+    () =>
+      setRepositoryTask(
+        file,
+        "company/frontend",
+        "remove-bottom-blur",
+        "another-task",
+      ),
+    /уже связана с задачей "86cb1ewr4"/,
+  );
+
+  const directory = await mkdtemp(join(tmpdir(), "task-flow-config-"));
+  const path = join(directory, "nested", "config.json");
+  await writeConfigFile(file, path);
+  const saved = await loadConfigFile(path);
+  assert.deepEqual(getRepositoryTasks(saved, "company/frontend"), {
+    "remove-bottom-blur": "86cb1ewr4",
+  });
+  assert.deepEqual(getRepositoryTasks(saved, "company/backend"), {
+    "existing-branch": "old-task",
   });
 });
 

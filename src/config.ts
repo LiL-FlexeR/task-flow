@@ -1,6 +1,12 @@
-import { readFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { TaskFlowError } from "./errors.js";
 import type {
   ConfigFile,
@@ -61,6 +67,66 @@ export function resolveConfig(
 ): WorkflowConfig {
   const repository = file.repositories?.[nameWithOwner] ?? {};
   return mergeLayers(file.defaults ?? {}, repository, cli);
+}
+
+export function getRepositoryTasks(
+  file: ConfigFile,
+  nameWithOwner: string,
+): Readonly<Record<string, string>> {
+  return file.repositories?.[nameWithOwner]?.tasks ?? {};
+}
+
+export function setRepositoryTask(
+  file: ConfigFile,
+  nameWithOwner: string,
+  branchName: string,
+  taskId: string,
+): boolean {
+  const repository = file.repositories?.[nameWithOwner] ?? {};
+  const currentTaskId = repository.tasks?.[branchName];
+  if (currentTaskId && currentTaskId !== taskId) {
+    throw new TaskFlowError(
+      `Ветка "${branchName}" уже связана с задачей "${currentTaskId}" в repositories["${nameWithOwner}"].tasks.`,
+    );
+  }
+  if (currentTaskId === taskId) {
+    return false;
+  }
+
+  file.repositories = {
+    ...file.repositories,
+    [nameWithOwner]: {
+      ...repository,
+      tasks: {
+        ...repository.tasks,
+        [branchName]: taskId,
+      },
+    },
+  };
+  return true;
+}
+
+export async function writeConfigFile(
+  file: ConfigFile,
+  path = CONFIG_PATH,
+): Promise<void> {
+  const directory = dirname(path);
+  const temporaryPath = join(
+    directory,
+    `.config.json.${process.pid}.${Date.now()}.tmp`,
+  );
+  await mkdir(directory, { recursive: true });
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(file, null, 2)}\n`, {
+      mode: 0o600,
+    });
+    await rename(temporaryPath, path);
+  } catch (error) {
+    await unlink(temporaryPath).catch(() => undefined);
+    throw new TaskFlowError(`Не удалось записать конфигурацию ${path}`, {
+      cause: error,
+    });
+  }
 }
 
 export async function readClickUpToken(
@@ -183,6 +249,24 @@ function validateConfigFile(
         );
       }
       validateLayer(layer, `${path}: repositories["${repository}"]`);
+      validateTasks(layer, `${path}: repositories["${repository}"].tasks`);
+    }
+  }
+}
+
+function validateTasks(value: unknown, location: string): void {
+  if (!isPlainObject(value) || value.tasks === undefined) {
+    return;
+  }
+  if (!isPlainObject(value.tasks)) {
+    throw new Error(`${location} должен быть объектом`);
+  }
+  for (const [branchName, taskId] of Object.entries(value.tasks)) {
+    if (!branchName.trim()) {
+      throw new Error(`${location} содержит пустое имя ветки`);
+    }
+    if (typeof taskId !== "string" || !taskId.trim()) {
+      throw new Error(`${location}["${branchName}"] должен быть непустой строкой`);
     }
   }
 }

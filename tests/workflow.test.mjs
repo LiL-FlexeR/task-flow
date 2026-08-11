@@ -267,6 +267,52 @@ exit 2
       }),
       /не были протестированы на staging/,
     );
+    await assert.rejects(
+      submitWorkflow({
+        ...options,
+        submissionBranch: "missing-remote-feature",
+        pushSubmissionBranch: false,
+      }),
+      /не найдена в remote "origin"/,
+    );
+
+    git(repositoryRoot, ["switch", "-c", "remote-feature"]);
+    await writeFile(join(repositoryRoot, "remote-only.txt"), "published\n");
+    git(repositoryRoot, ["add", "remote-only.txt"]);
+    git(repositoryRoot, ["commit", "--quiet", "-m", "Published remote feature"]);
+    git(repositoryRoot, ["push", "--quiet", "origin", "remote-feature"]);
+    const publishedRemoteOid = gitOutput(bareRemote, [
+      "rev-parse",
+      "refs/heads/remote-feature",
+    ]).trim();
+    await writeFile(join(repositoryRoot, "remote-only.txt"), "not published\n");
+    git(repositoryRoot, ["add", "remote-only.txt"]);
+    git(repositoryRoot, ["commit", "--quiet", "-m", "Local-only change"]);
+    git(repositoryRoot, ["switch", "master"]);
+    process.env.GH_PROMOTION_MODE = "";
+
+    assert.deepEqual(
+      await submitWorkflow({
+        ...options,
+        submissionBranch: "remote-feature",
+        pushSubmissionBranch: false,
+      }),
+      [
+        {
+          role: "staging",
+          targetBranch: "staging",
+          url: "https://github.com/company/frontend/pull/124",
+        },
+      ],
+    );
+    assert.equal(
+      gitOutput(bareRemote, [
+        "rev-parse",
+        "refs/heads/remote-feature",
+      ]).trim(),
+      publishedRemoteOid,
+      "submitting another branch must not push its local commits",
+    );
   } finally {
     globalThis.fetch = originalFetch;
     if (originalPath === undefined) delete process.env.PATH;
@@ -284,7 +330,7 @@ exit 2
     else process.env.GH_MERGED_HEAD = originalMergedHead;
   }
 
-  assert.equal(updates.length, 4);
+  assert.equal(updates.length, 5);
   assert.equal(
     updates[0].body.value,
     [
@@ -316,9 +362,19 @@ exit 2
   assert.match(updates[1].url, /\/field\/staging-pr-field$/);
   assert.match(updates[2].url, /\/field\/staging-pr-field$/);
   assert.match(updates[3].url, /\/field\/production-pr-field$/);
+  assert.equal(
+    updates[4].body.value,
+    [
+      "company/backend: https://github.com/company/backend/pull/45",
+      "company/frontend: https://github.com/company/frontend/pull/124",
+    ].join("\n"),
+  );
+  assert.match(updates[4].url, /\/field\/staging-pr-field$/);
   assert.deepEqual(
     (await readFile(ghCwdLog, "utf8")).trim().split("\n"),
     [
+      repositoryRoot,
+      repositoryRoot,
       repositoryRoot,
       repositoryRoot,
       repositoryRoot,
@@ -343,6 +399,14 @@ exit 2
   assert.match(ghCalls[6], /pr list .* --base master /);
   assert.match(ghCalls[7], /pr create .* --base master /);
   assert.match(ghCalls[8], /pr list .* --base staging /);
+  assert.match(
+    ghCalls[9],
+    /pr list .* --head remote-feature --base staging /,
+  );
+  assert.match(
+    ghCalls[10],
+    /pr create .* --base staging --head remote-feature /,
+  );
   assert.equal(
     await readFile(ghBodyLog, "utf8"),
     "Add some stuff - https://app.clickup.com/t/86cavbfx9\n\nImplementation details",
